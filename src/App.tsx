@@ -3,11 +3,17 @@ import { TopBar } from './components/TopBar';
 import { RSVPForm } from './components/RSVPForm';
 import { LiveStats } from './components/LiveStats';
 import { GuestListTable } from './components/GuestListTable';
+import { GoogleSheetSyncBar } from './components/GoogleSheetSyncBar';
 import { RSVP, SummaryStats, EventInfo } from './types';
 import { CheckCircle2, Heart } from 'lucide-react';
+import { User } from 'firebase/auth';
+import { initAuth, googleSignIn, logoutGoogle } from './lib/googleAuth';
+import { appendRsvpToGoogleSheet, appendRsvpToWebhook, syncAllRsvpsToGoogleSheet } from './lib/googleSheets';
 
 const CLOUD_SYNC_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a186ea527c4985';
 const LOCAL_STORAGE_KEY = 'farewell_biryani_rsvps_v5';
+const SPREADSHEET_ID_KEY = 'farewell_biryani_spreadsheet_id';
+const WEBHOOK_URL_KEY = 'farewell_biryani_webhook_url';
 
 export default function App() {
   const [eventInfo, setEventInfo] = useState<EventInfo>({
@@ -27,6 +33,55 @@ export default function App() {
   });
 
   const [submittedMessage, setSubmittedMessage] = useState<string | null>(null);
+
+  // Google Auth & Sheets Integration State
+  const [googleUser, setGoogleUser] = useState<User | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [spreadsheetId, setSpreadsheetId] = useState<string>(() => {
+    return localStorage.getItem(SPREADSHEET_ID_KEY) || 'Untitled_spreadsheet_624c0d81';
+  });
+  const [webhookUrl, setWebhookUrl] = useState<string>(() => {
+    return localStorage.getItem(WEBHOOK_URL_KEY) || '';
+  });
+  const [isSyncingSheet, setIsSyncingSheet] = useState(false);
+  const [syncSuccessMsg, setSyncSuccessMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem(SPREADSHEET_ID_KEY, spreadsheetId);
+  }, [spreadsheetId]);
+
+  useEffect(() => {
+    localStorage.setItem(WEBHOOK_URL_KEY, webhookUrl);
+  }, [webhookUrl]);
+
+  // Init Google Auth listener
+  useEffect(() => {
+    const unsubscribe = initAuth((user, token) => {
+      setGoogleUser(user);
+      setAccessToken(token);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleGoogleSignIn = async () => {
+    try {
+      const res = await googleSignIn();
+      if (res) {
+        setGoogleUser(res.user);
+        setAccessToken(res.accessToken);
+        setSyncSuccessMsg(`Signed in as ${res.user.email}. Google Sheets link active!`);
+        setTimeout(() => setSyncSuccessMsg(null), 5000);
+      }
+    } catch (err: any) {
+      console.error('Google Sheets auth error:', err);
+    }
+  };
+
+  const handleGoogleSignOut = async () => {
+    await logoutGoogle();
+    setGoogleUser(null);
+    setAccessToken(null);
+  };
 
   const calculateStats = (list: RSVP[]): SummaryStats => {
     let attending = 0;
@@ -64,7 +119,7 @@ export default function App() {
         }
       }
     } catch (err) {
-      console.warn('Cloud sync read failed, trying local server/storage:', err);
+      // Fallback
     }
 
     try {
@@ -96,12 +151,11 @@ export default function App() {
 
   useEffect(() => {
     fetchRSVPData();
-    // Poll every 3 seconds so choices across devices sync instantly
     const interval = setInterval(fetchRSVPData, 3000);
     return () => clearInterval(interval);
   }, []);
 
-  // Merge new submission into Central Cloud Database
+  // Merge new submission into Central Cloud Database & Google Sheet Webhook
   const handleRsvpSuccess = async (newRsvp: RSVP) => {
     const msg = newRsvp.attending
       ? `Choice saved for ${newRsvp.name} (${
@@ -113,7 +167,6 @@ export default function App() {
 
     let latestCloudList: RSVP[] = [];
 
-    // Fetch latest cloud entries first to avoid overwriting existing guest entries
     try {
       const getRes = await fetch(CLOUD_SYNC_URL);
       if (getRes.ok) {
@@ -123,11 +176,9 @@ export default function App() {
         }
       }
     } catch (err) {
-      console.warn('Could not fetch latest cloud list before saving, using local:', err);
       latestCloudList = rsvps;
     }
 
-    // Merge by name & ID so duplicate entries update cleanly
     const merged = [
       newRsvp,
       ...latestCloudList.filter(
@@ -138,6 +189,21 @@ export default function App() {
     setRsvps(merged);
     setStats(calculateStats(merged));
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(merged));
+
+    // Auto-append to Google Sheet Webhook if configured
+    if (webhookUrl) {
+      appendRsvpToWebhook(webhookUrl, newRsvp);
+    }
+
+    // Auto-append row to linked Google Sheet if access token is active
+    if (accessToken && spreadsheetId) {
+      appendRsvpToGoogleSheet(accessToken, spreadsheetId, newRsvp).then((success) => {
+        if (success) {
+          setSyncSuccessMsg(`Automatically added ${newRsvp.name} to Google Sheet!`);
+          setTimeout(() => setSyncSuccessMsg(null), 5000);
+        }
+      });
+    }
 
     // Save Merged List to Central Cloud DB
     try {
@@ -153,22 +219,30 @@ export default function App() {
       console.error('Cloud save failed:', err);
     }
 
-    // Also sync with Express server if available
-    try {
-      await fetch('/api/rsvps', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newRsvp),
-      });
-    } catch (err) {
-      // Local server unavailable on static host
-    }
-
     fetchRSVPData();
 
     setTimeout(() => {
       setSubmittedMessage(null);
     }, 4000);
+  };
+
+  const handleSyncAllToGoogleSheet = async () => {
+    if (!accessToken) {
+      handleGoogleSignIn();
+      return;
+    }
+
+    setIsSyncingSheet(true);
+    const success = await syncAllRsvpsToGoogleSheet(accessToken, spreadsheetId, rsvps);
+    setIsSyncingSheet(false);
+
+    if (success) {
+      setSyncSuccessMsg(`Successfully synced all ${rsvps.length} rows to Google Sheet!`);
+      setTimeout(() => setSyncSuccessMsg(null), 5000);
+    } else {
+      setSyncSuccessMsg('Failed to update Google Sheet. Please check sheet ID or sign in again.');
+      setTimeout(() => setSyncSuccessMsg(null), 5000);
+    }
   };
 
   const handleDeleteRsvp = async (id: string) => {
@@ -203,12 +277,6 @@ export default function App() {
     } catch (err) {
       console.error('Cloud delete failed:', err);
     }
-
-    try {
-      await fetch(`/api/rsvps/${id}`, { method: 'DELETE' });
-    } catch (err) {
-      // Offline fallback
-    }
   };
 
   return (
@@ -221,7 +289,22 @@ export default function App() {
       />
 
       {/* Main Full Desktop Page Body */}
-      <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full flex flex-col justify-between space-y-6">
+      <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full flex flex-col justify-between space-y-4">
+        {/* Google Sheet Sync Control Bar */}
+        <GoogleSheetSyncBar
+          user={googleUser}
+          accessToken={accessToken}
+          spreadsheetId={spreadsheetId}
+          setSpreadsheetId={setSpreadsheetId}
+          webhookUrl={webhookUrl}
+          setWebhookUrl={setWebhookUrl}
+          onGoogleSignIn={handleGoogleSignIn}
+          onGoogleSignOut={handleGoogleSignOut}
+          onSyncAllToSheet={handleSyncAllToGoogleSheet}
+          isSyncing={isSyncingSheet}
+          syncSuccessMsg={syncSuccessMsg}
+        />
+
         {/* Success Alert Banner */}
         {submittedMessage && (
           <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-50 to-emerald-100 border border-emerald-300 text-emerald-950 text-xs font-extrabold flex items-center gap-3 shadow-xl animate-fade-in shrink-0">
@@ -257,7 +340,7 @@ export default function App() {
             <span>Farewell Party for Yashvir Singh Sir &amp; Suresh Kumar Sir</span>
           </div>
           <div className="text-[11px] font-mono text-amber-300/90">
-            🌐 Live Cloud Sync Active · 📅 30.10.2026 @ 12:00 PM Noon · CHQ, Faridabad
+            📊 Google Sheets Sync Active · 📅 30.10.2026 @ 12:00 PM Noon · CHQ, Faridabad
           </div>
         </div>
       </footer>
