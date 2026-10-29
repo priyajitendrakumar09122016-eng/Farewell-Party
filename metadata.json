@@ -1,0 +1,6 @@
+{
+  "name": "Biryani Party RSVP - CHQ Faridabad",
+  "description": "Guest RSVP & Food Choice Management for Biryani Feast on 30 Oct 2026 at CHQ, Faridabad",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
