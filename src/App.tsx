@@ -7,7 +7,7 @@ import { RSVP, SummaryStats, EventInfo } from './types';
 import { CheckCircle2, Heart } from 'lucide-react';
 
 const CLOUD_SYNC_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a186ea527c4985';
-const LOCAL_STORAGE_KEY = 'farewell_biryani_rsvps_v4';
+const LOCAL_STORAGE_KEY = 'farewell_biryani_rsvps_v5';
 
 export default function App() {
   const [eventInfo, setEventInfo] = useState<EventInfo>({
@@ -101,7 +101,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Save new response to Cloud Database URL + Local
+  // Merge new submission into Central Cloud Database
   const handleRsvpSuccess = async (newRsvp: RSVP) => {
     const msg = newRsvp.attending
       ? `Choice saved for ${newRsvp.name} (${
@@ -111,19 +111,42 @@ export default function App() {
 
     setSubmittedMessage(msg);
 
-    const updated = [newRsvp, ...rsvps.filter((r) => r.id !== newRsvp.id)];
-    setRsvps(updated);
-    setStats(calculateStats(updated));
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+    let latestCloudList: RSVP[] = [];
 
-    // Save to Central Cloud DB
+    // Fetch latest cloud entries first to avoid overwriting existing guest entries
+    try {
+      const getRes = await fetch(CLOUD_SYNC_URL);
+      if (getRes.ok) {
+        const cloudObj = await getRes.json();
+        if (cloudObj && cloudObj.data && Array.isArray(cloudObj.data.rsvps)) {
+          latestCloudList = cloudObj.data.rsvps;
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch latest cloud list before saving, using local:', err);
+      latestCloudList = rsvps;
+    }
+
+    // Merge by name & ID so duplicate entries update cleanly
+    const merged = [
+      newRsvp,
+      ...latestCloudList.filter(
+        (r) => r.id !== newRsvp.id && r.name.toLowerCase() !== newRsvp.name.toLowerCase()
+      ),
+    ];
+
+    setRsvps(merged);
+    setStats(calculateStats(merged));
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(merged));
+
+    // Save Merged List to Central Cloud DB
     try {
       await fetch(CLOUD_SYNC_URL, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: 'Faridabad Farewell RSVPs',
-          data: { rsvps: updated },
+          data: { rsvps: merged },
         }),
       });
     } catch (err) {
@@ -149,7 +172,21 @@ export default function App() {
   };
 
   const handleDeleteRsvp = async (id: string) => {
-    const updated = rsvps.filter((r) => r.id !== id);
+    let latestCloudList: RSVP[] = rsvps;
+
+    try {
+      const getRes = await fetch(CLOUD_SYNC_URL);
+      if (getRes.ok) {
+        const cloudObj = await getRes.json();
+        if (cloudObj && cloudObj.data && Array.isArray(cloudObj.data.rsvps)) {
+          latestCloudList = cloudObj.data.rsvps;
+        }
+      }
+    } catch (err) {
+      // fallback
+    }
+
+    const updated = latestCloudList.filter((r) => r.id !== id);
     setRsvps(updated);
     setStats(calculateStats(updated));
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));

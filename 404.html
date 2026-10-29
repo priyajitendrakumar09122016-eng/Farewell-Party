@@ -12,9 +12,22 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,300..800&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap" rel="stylesheet">
-    <style>body{color:#fef3c7;background-color:#2e1005;margin:0;padding:0;font-family:Plus Jakarta Sans,system-ui,sans-serif}#root{min-height:100vh}</style>
-    <script type="module" crossorigin src="./assets/index-GaW27Zq-.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-Do_JZlqM.css">
+    <style>html,body{color:#fef3c7;background-color:#2e1005;margin:0;padding:0;font-family:Plus Jakarta Sans,system-ui,-apple-system,BlinkMacSystemFont,sans-serif}#root{min-height:100vh}</style>
+    <script>
+      window.onerror = function(msg, url, lineNo, columnNo, error) {
+        console.error('Global Error Caught:', msg, url, lineNo);
+        var root = document.getElementById('root');
+        if (root && (!root.children || root.children.length === 0)) {
+          root.innerHTML = '<div style="padding: 32px 16px; text-align: center; color: #fef3c7; background: #2e1005; min-height: 100vh;">' +
+            '<h2 style="color: #fbbf24; font-family: serif; font-size: 20px; margin-bottom: 8px;">Farewell Party for Yashvir Singh Sir &amp; Suresh Kumar Sir</h2>' +
+            '<p style="font-size: 13px; opacity: 0.9;">📅 30.10.2026 @ 12:00 PM Noon · CHQ, Faridabad</p>' +
+            '<div style="margin-top: 24px;"><button onclick="location.reload()" style="padding: 12px 24px; background: #d97706; color: white; border: none; border-radius: 12px; font-weight: bold; font-size: 14px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">Refresh Page</button></div>' +
+            '</div>';
+        }
+      };
+    </script>
+    <script type="module" crossorigin src="./assets/index-v6sA0Wex.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Bs76N8kp.css">
   </head>
   <body>
     <div id="root"></div>
