@@ -22,64 +22,24 @@ app.use((req, res, next) => {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Persistent store setup
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'rsvps.json');
-const EVENT_FILE = path.join(DATA_DIR, 'event.json');
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
+// Reset file to empty []
+fs.writeFileSync(DATA_FILE, JSON.stringify([], null, 2));
+
 export interface RSVP {
   id: string;
   name: string;
   phone?: string;
-  foodChoice: 'veg' | 'non-veg';
+  attending: boolean;
+  foodChoice?: 'veg' | 'non-veg';
   submittedAt: string;
 }
-
-export interface EventInfo {
-  title: string;
-  honorees: string;
-  date: string;
-  time: string;
-  locationName: string;
-  fullAddress: string;
-}
-
-const DEFAULT_EVENT_INFO: EventInfo = {
-  title: "Farewell Party",
-  honorees: "Yashvir Singh Sir & Suresh Kumar Sir",
-  date: "30.10.2026 (Friday)",
-  time: "12:00 PM Noon",
-  locationName: "CHQ",
-  fullAddress: "CHQ, Faridabad, Haryana"
-};
-
-const SEED_RSVPS: RSVP[] = [
-  {
-    id: "seed-1",
-    name: "Aman Sharma",
-    phone: "9812345678",
-    foodChoice: "non-veg",
-    submittedAt: new Date(Date.now() - 86400000 * 2).toISOString()
-  },
-  {
-    id: "seed-2",
-    name: "Priya Patel",
-    phone: "9876512345",
-    foodChoice: "veg",
-    submittedAt: new Date(Date.now() - 86400000).toISOString()
-  },
-  {
-    id: "seed-3",
-    name: "Rahul Verma",
-    phone: "9988776655",
-    foodChoice: "non-veg",
-    submittedAt: new Date().toISOString()
-  }
-];
 
 function getRSVPs(): RSVP[] {
   try {
@@ -90,47 +50,45 @@ function getRSVPs(): RSVP[] {
   } catch (err) {
     console.error("Failed to read rsvps.json:", err);
   }
-  fs.writeFileSync(DATA_FILE, JSON.stringify(SEED_RSVPS, null, 2));
-  return SEED_RSVPS;
+  fs.writeFileSync(DATA_FILE, JSON.stringify([], null, 2));
+  return [];
 }
 
 function saveRSVPs(rsvps: RSVP[]): void {
   fs.writeFileSync(DATA_FILE, JSON.stringify(rsvps, null, 2));
 }
 
-function getEventInfo(): EventInfo {
-  try {
-    if (fs.existsSync(EVENT_FILE)) {
-      const data = fs.readFileSync(EVENT_FILE, 'utf-8');
-      return JSON.parse(data);
-    }
-  } catch (err) {
-    console.error("Failed to read event.json:", err);
-  }
-  fs.writeFileSync(EVENT_FILE, JSON.stringify(DEFAULT_EVENT_INFO, null, 2));
-  return DEFAULT_EVENT_INFO;
-}
-
 // API Routes
 app.get('/api/event', (req, res) => {
-  res.json(getEventInfo());
+  res.json({
+    title: "Farewell Party",
+    honorees: "Yashvir Singh Sir & Suresh Kumar Sir",
+    date: "30.10.2026 (Friday)",
+    time: "12:00 PM Noon",
+    locationName: "CHQ, Faridabad",
+  });
 });
 
 app.get('/api/rsvps', (req, res) => {
   const rsvps = getRSVPs();
   
+  let attendingCount = 0;
   let vegCount = 0;
   let nonVegCount = 0;
 
   rsvps.forEach(r => {
-    if (r.foodChoice === 'veg') vegCount++;
-    else nonVegCount++;
+    if (r.attending) {
+      attendingCount++;
+      if (r.foodChoice === 'veg') vegCount++;
+      else if (r.foodChoice === 'non-veg') nonVegCount++;
+    }
   });
 
   res.json({
     rsvps,
     summary: {
       totalRSVPs: rsvps.length,
+      attendingCount,
       vegPortions: vegCount,
       nonVegPortions: nonVegCount,
     }
@@ -138,9 +96,9 @@ app.get('/api/rsvps', (req, res) => {
 });
 
 app.post('/api/rsvps', (req, res) => {
-  const { name, phone, foodChoice } = req.body;
-  if (!name || !foodChoice) {
-    return res.status(400).json({ error: "Name and food choice (veg or non-veg) are required." });
+  const { name, phone, attending, foodChoice } = req.body;
+  if (!name || attending === undefined) {
+    return res.status(400).json({ error: "Name and attendance status are required." });
   }
 
   const rsvps = getRSVPs();
@@ -148,11 +106,14 @@ app.post('/api/rsvps', (req, res) => {
     r => r.name.trim().toLowerCase() === name.trim().toLowerCase()
   );
 
+  const isAttending = Boolean(attending);
+
   const newRsvp: RSVP = {
     id: existingIndex >= 0 ? rsvps[existingIndex].id : 'rsvp-' + Date.now(),
     name: name.trim(),
     phone: phone ? phone.trim() : '',
-    foodChoice: foodChoice === 'veg' ? 'veg' : 'non-veg',
+    attending: isAttending,
+    foodChoice: isAttending ? (foodChoice === 'veg' ? 'veg' : 'non-veg') : undefined,
     submittedAt: new Date().toISOString()
   };
 
@@ -163,7 +124,7 @@ app.post('/api/rsvps', (req, res) => {
   }
 
   saveRSVPs(rsvps);
-  res.status(200).json({ message: "Choice saved successfully!", rsvp: newRsvp });
+  res.status(200).json({ message: "Saved successfully!", rsvp: newRsvp });
 });
 
 app.delete('/api/rsvps/:id', (req, res) => {
@@ -174,7 +135,6 @@ app.delete('/api/rsvps/:id', (req, res) => {
   res.json({ message: "RSVP removed" });
 });
 
-// Vite Middleware for Frontend Serving in Dev Mode
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await import('vite');

@@ -4,12 +4,14 @@ export interface RSVP {
   id: string;
   name: string;
   phone?: string;
-  foodChoice: FoodChoice;
+  attending: boolean;
+  foodChoice?: FoodChoice;
   submittedAt: string;
 }
 
 export interface SummaryStats {
   totalRSVPs: number;
+  attendingCount: number;
   vegPortions: number;
   nonVegPortions: number;
 }
@@ -20,5 +22,4 @@ export interface EventInfo {
   date: string;
   time: string;
   locationName: string;
-  fullAddress: string;
 }
