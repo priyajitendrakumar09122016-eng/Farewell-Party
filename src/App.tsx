@@ -4,9 +4,10 @@ import { RSVPForm } from './components/RSVPForm';
 import { LiveStats } from './components/LiveStats';
 import { GuestListTable } from './components/GuestListTable';
 import { RSVP, SummaryStats, EventInfo } from './types';
-import { CheckCircle2, Heart, Sparkles } from 'lucide-react';
+import { CheckCircle2, Heart } from 'lucide-react';
 
-const LOCAL_STORAGE_KEY = 'farewell_biryani_rsvps_v3';
+const CLOUD_SYNC_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a186ea527c4985';
+const LOCAL_STORAGE_KEY = 'farewell_biryani_rsvps_v4';
 
 export default function App() {
   const [eventInfo, setEventInfo] = useState<EventInfo>({
@@ -48,7 +49,24 @@ export default function App() {
     };
   };
 
+  // Fetch live choices from Cloud Central Sync URL first, fallback to Express or LocalStorage
   const fetchRSVPData = async () => {
+    try {
+      const res = await fetch(CLOUD_SYNC_URL);
+      if (res.ok) {
+        const cloudObj = await res.json();
+        if (cloudObj && cloudObj.data && Array.isArray(cloudObj.data.rsvps)) {
+          const list: RSVP[] = cloudObj.data.rsvps;
+          setRsvps(list);
+          setStats(calculateStats(list));
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(list));
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('Cloud sync read failed, trying local server/storage:', err);
+    }
+
     try {
       const res = await fetch('/api/rsvps');
       if (res.ok) {
@@ -61,7 +79,7 @@ export default function App() {
         }
       }
     } catch (err) {
-      // Offline / Static host fallback
+      // Offline fallback
     }
 
     try {
@@ -70,11 +88,6 @@ export default function App() {
         const parsed: RSVP[] = JSON.parse(stored);
         setRsvps(parsed);
         setStats(calculateStats(parsed));
-      } else {
-        // Start completely BLANK (0 responses)
-        setRsvps([]);
-        setStats({ totalRSVPs: 0, attendingCount: 0, vegPortions: 0, nonVegPortions: 0 });
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify([]));
       }
     } catch (err) {
       console.error('Failed to load storage:', err);
@@ -83,11 +96,13 @@ export default function App() {
 
   useEffect(() => {
     fetchRSVPData();
-    const interval = setInterval(fetchRSVPData, 4000);
+    // Poll every 3 seconds so choices across devices sync instantly
+    const interval = setInterval(fetchRSVPData, 3000);
     return () => clearInterval(interval);
   }, []);
 
-  const handleRsvpSuccess = (newRsvp: RSVP) => {
+  // Save new response to Cloud Database URL + Local
+  const handleRsvpSuccess = async (newRsvp: RSVP) => {
     const msg = newRsvp.attending
       ? `Choice saved for ${newRsvp.name} (${
           newRsvp.foodChoice === 'veg' ? 'Veg Biryani' : 'Non-Veg Biryani'
@@ -101,6 +116,31 @@ export default function App() {
     setStats(calculateStats(updated));
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
 
+    // Save to Central Cloud DB
+    try {
+      await fetch(CLOUD_SYNC_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Faridabad Farewell RSVPs',
+          data: { rsvps: updated },
+        }),
+      });
+    } catch (err) {
+      console.error('Cloud save failed:', err);
+    }
+
+    // Also sync with Express server if available
+    try {
+      await fetch('/api/rsvps', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newRsvp),
+      });
+    } catch (err) {
+      // Local server unavailable on static host
+    }
+
     fetchRSVPData();
 
     setTimeout(() => {
@@ -109,16 +149,29 @@ export default function App() {
   };
 
   const handleDeleteRsvp = async (id: string) => {
+    const updated = rsvps.filter((r) => r.id !== id);
+    setRsvps(updated);
+    setStats(calculateStats(updated));
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+
+    try {
+      await fetch(CLOUD_SYNC_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Faridabad Farewell RSVPs',
+          data: { rsvps: updated },
+        }),
+      });
+    } catch (err) {
+      console.error('Cloud delete failed:', err);
+    }
+
     try {
       await fetch(`/api/rsvps/${id}`, { method: 'DELETE' });
     } catch (err) {
       // Offline fallback
     }
-
-    const updated = rsvps.filter((r) => r.id !== id);
-    setRsvps(updated);
-    setStats(calculateStats(updated));
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
   };
 
   return (
@@ -167,7 +220,7 @@ export default function App() {
             <span>Farewell Party for Yashvir Singh Sir &amp; Suresh Kumar Sir</span>
           </div>
           <div className="text-[11px] font-mono text-amber-300/90">
-            📅 30.10.2026 @ 12:00 PM Noon · CHQ, Faridabad
+            🌐 Live Cloud Sync Active · 📅 30.10.2026 @ 12:00 PM Noon · CHQ, Faridabad
           </div>
         </div>
       </footer>
